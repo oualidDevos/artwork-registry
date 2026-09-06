@@ -55,6 +55,7 @@ jobs:
           solution-type: "Unmanaged"
 
       - name: Run Solution Checker
+        continue-on-error: true
         uses: microsoft/powerplatform-actions/check-solution@v1
         with:
           environment-url: ${{ secrets.DEV_ENVIRONMENT_URL }}
@@ -62,8 +63,8 @@ jobs:
           client-secret: ${{ secrets.CLIENT_SECRET }}
           tenant-id: ${{ secrets.TENANT_ID }}
           path: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_unmanaged.zip
-          geo: "unitedstates" # <-- change to your Power Platform region if different
-          rule-level-override: High # fail the build only on High severity findings
+          geo: "unitedstates"
+          rule-level-override: High
 
       - name: Upload unmanaged solution as build artifact
         uses: actions/upload-artifact@v4

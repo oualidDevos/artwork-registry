@@ -1,0 +1,72 @@
+name: Export solution from Dev
+
+# Run this manually whenever you've finished a chunk of work in the Dev
+# environment and want to bring the changes into source control.
+#
+# It exports your solution as UNMANAGED, unpacks it into readable XML/JSON
+# files, and opens a branch with the changes so you can review a diff and
+# raise a pull request into main. Nothing is deployed anywhere by this
+# workflow — it only updates the repo.
+
+on:
+  workflow_dispatch:
+    inputs:
+      solution_name:
+        description: "Unique (schema) name of the solution in Dataverse, e.g. ContosoSales"
+        required: true
+
+env:
+  # Staging locations used between steps — leave these as-is.
+  EXPORT_PATH: out/exported/
+  UNPACK_PATH: out/solutions/
+  SOLUTION_TARGET_FOLDER: solutions/
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  export-from-dev:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Install Power Platform CLI tools
+        uses: microsoft/powerplatform-actions/actions-install@v1
+
+      - name: Verify connection to Dev
+        uses: microsoft/powerplatform-actions/who-am-i@v1
+        with:
+          environment-url: ${{ secrets.DEV_ENVIRONMENT_URL }}
+          app-id: ${{ secrets.APP_ID }}
+          client-secret: ${{ secrets.CLIENT_SECRET }}
+          tenant-id: ${{ secrets.TENANT_ID }}
+
+      - name: Export solution (unmanaged) from Dev
+        uses: microsoft/powerplatform-actions/export-solution@v1
+        with:
+          environment-url: ${{ secrets.DEV_ENVIRONMENT_URL }}
+          app-id: ${{ secrets.APP_ID }}
+          client-secret: ${{ secrets.CLIENT_SECRET }}
+          tenant-id: ${{ secrets.TENANT_ID }}
+          solution-name: ${{ github.event.inputs.solution_name }}
+          solution-output-file: ${{ env.EXPORT_PATH }}/${{ github.event.inputs.solution_name }}.zip
+
+      - name: Unpack solution into source-controllable files
+        uses: microsoft/powerplatform-actions/unpack-solution@v1
+        with:
+          solution-file: ${{ env.EXPORT_PATH }}/${{ github.event.inputs.solution_name }}.zip
+          solution-folder: ${{ env.UNPACK_PATH }}/${{ github.event.inputs.solution_name }}
+          solution-type: "Unmanaged"
+          overwrite-files: true
+
+      - name: Create/update a branch with the changes
+        uses: microsoft/powerplatform-actions/branch-solution@v1
+        with:
+          solution-folder: ${{ env.UNPACK_PATH }}/${{ github.event.inputs.solution_name }}
+          solution-target-folder: ${{ env.SOLUTION_TARGET_FOLDER }}/${{ github.event.inputs.solution_name }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          allow-empty-commit: false

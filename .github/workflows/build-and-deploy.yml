@@ -1,0 +1,128 @@
+name: Build and deploy solution
+
+# Runs whenever a solution under solutions/** changes on main (i.e. after
+# you've merged the PR created by export-solution.yml).
+#
+# Flow: pack the source as a MANAGED solution -> run the solution checker
+# -> deploy to Test -> wait for manual approval -> deploy to Prod.
+#
+# The approval gate is configured on GitHub's side: create an environment
+# named "production" under Settings > Environments and add yourself (or
+# your team) as a required reviewer. GitHub will then pause the
+# deploy-to-prod job until someone approves it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "solutions/**"
+  workflow_dispatch:
+    inputs:
+      solution_name:
+        description: "Solution name to build (only needed for manual runs)"
+        required: false
+
+env:
+  SOLUTION_NAME: ${{ github.event.inputs.solution_name || 'ArtWorkRegistryv1' }} # <-- set your default solution name
+  PACK_PATH: out/deploy
+
+jobs:
+  build:
+    runs-on: windows-latest
+    outputs:
+      artifact-name: managed-solution
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Power Platform CLI tools
+        uses: microsoft/powerplatform-actions/actions-install@v1
+
+      - name: Pack solution as Managed
+        uses: microsoft/powerplatform-actions/pack-solution@v1
+        with:
+          solution-folder: solutions/${{ env.SOLUTION_NAME }}
+          solution-file: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_managed.zip
+          solution-type: "Managed"
+
+      - name: Run Solution Checker
+        uses: microsoft/powerplatform-actions/check-solution@v1
+        with:
+          environment-url: ${{ secrets.DEV_ENVIRONMENT_URL }}
+          app-id: ${{ secrets.APP_ID }}
+          client-secret: ${{ secrets.CLIENT_SECRET }}
+          tenant-id: ${{ secrets.TENANT_ID }}
+          path: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_managed.zip
+          geo: "Europe" # <-- change to your Power Platform region if different
+          rule-level-override: High # fail the build only on High severity findings
+
+      - name: Upload managed solution as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: managed-solution
+          path: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_managed.zip
+
+  deploy-test:
+    needs: build
+    runs-on: windows-latest
+    environment: test
+    steps:
+      - name: Install Power Platform CLI tools
+        uses: microsoft/powerplatform-actions/actions-install@v1
+
+      - name: Download managed solution
+        uses: actions/download-artifact@v4
+        with:
+          name: managed-solution
+          path: ${{ env.PACK_PATH }}
+
+      - name: Import to Test
+        uses: microsoft/powerplatform-actions/import-solution@v1
+        with:
+          environment-url: ${{ secrets.TEST_ENVIRONMENT_URL }}
+          app-id: ${{ secrets.APP_ID }}
+          client-secret: ${{ secrets.CLIENT_SECRET }}
+          tenant-id: ${{ secrets.TENANT_ID }}
+          solution-file: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_managed.zip
+          # settings-file: deployment/test.settings.json   # uncomment once you have
+          #   environment-specific connection references / env variables — see README
+
+      - name: Publish customizations
+        uses: microsoft/powerplatform-actions/publish-solution@v1
+        with:
+          environment-url: ${{ secrets.TEST_ENVIRONMENT_URL }}
+          app-id: ${{ secrets.APP_ID }}
+          client-secret: ${{ secrets.CLIENT_SECRET }}
+          tenant-id: ${{ secrets.TENANT_ID }}
+
+  deploy-prod:
+    needs: deploy-test
+    runs-on: windows-latest
+    environment: production # <-- add required reviewers on this GitHub environment
+    steps:
+      - name: Install Power Platform CLI tools
+        uses: microsoft/powerplatform-actions/actions-install@v1
+
+      - name: Download managed solution
+        uses: actions/download-artifact@v4
+        with:
+          name: managed-solution
+          path: ${{ env.PACK_PATH }}
+
+      - name: Import to Prod
+        uses: microsoft/powerplatform-actions/import-solution@v1
+        with:
+          environment-url: ${{ secrets.PROD_ENVIRONMENT_URL }}
+          app-id: ${{ secrets.APP_ID }}
+          client-secret: ${{ secrets.CLIENT_SECRET }}
+          tenant-id: ${{ secrets.TENANT_ID }}
+          solution-file: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_managed.zip
+          # settings-file: deployment/prod.settings.json
+
+      - name: Publish customizations
+        uses: microsoft/powerplatform-actions/publish-solution@v1
+        with:
+          environment-url: ${{ secrets.PROD_ENVIRONMENT_URL }}
+          app-id: ${{ secrets.APP_ID }}
+          client-secret: ${{ secrets.CLIENT_SECRET }}
+          tenant-id: ${{ secrets.TENANT_ID }}

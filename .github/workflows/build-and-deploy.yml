@@ -3,8 +3,17 @@ name: Build and deploy solution
 # Runs whenever a solution under solutions/** changes on main (i.e. after
 # you've merged the PR created by export-solution.yml).
 #
-# Flow: pack the source as a MANAGED solution -> run the solution checker
-# -> deploy to Test -> wait for manual approval -> deploy to Prod.
+# Flow: pack the source (UNMANAGED — see note below) -> run the solution
+# checker -> deploy to Test -> wait for manual approval -> deploy to Prod.
+#
+# Why unmanaged here: a solution folder unpacked from an unmanaged export
+# can only be re-packed as unmanaged — the pac CLI records the type at
+# unpack time and refuses to convert it ("Solution package type did not
+# match requested type"). Producing a real managed build requires an
+# extra intermediate environment (import unmanaged, then export managed
+# from there) — an upgrade for later. This keeps Dev -> Test -> Prod with
+# an approval gate working now, just without the "downstream envs are
+# locked from manual edits" property that managed solutions add.
 #
 # The approval gate is configured on GitHub's side: create an environment
 # named "production" under Settings > Environments and add yourself (or
@@ -23,14 +32,14 @@ on:
         required: false
 
 env:
-  SOLUTION_NAME: ${{ github.event.inputs.solution_name || 'ArtWorkRegistryv1' }} # <-- set your default solution name
+  SOLUTION_NAME: ${{ github.event.inputs.solution_name || 'ArtWorkRegistryv1' }}
   PACK_PATH: out/deploy
 
 jobs:
   build:
     runs-on: windows-latest
     outputs:
-      artifact-name: managed-solution
+      artifact-name: unmanaged-solution
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -38,12 +47,12 @@ jobs:
       - name: Install Power Platform CLI tools
         uses: microsoft/powerplatform-actions/actions-install@v1
 
-      - name: Pack solution as Managed
+      - name: Pack solution as Unmanaged
         uses: microsoft/powerplatform-actions/pack-solution@v1
         with:
           solution-folder: solutions/${{ env.SOLUTION_NAME }}
-          solution-file: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_managed.zip
-          solution-type: "Managed"
+          solution-file: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_unmanaged.zip
+          solution-type: "Unmanaged"
 
       - name: Run Solution Checker
         uses: microsoft/powerplatform-actions/check-solution@v1
@@ -52,15 +61,15 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           client-secret: ${{ secrets.CLIENT_SECRET }}
           tenant-id: ${{ secrets.TENANT_ID }}
-          path: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_managed.zip
-          geo: "Europe" # <-- change to your Power Platform region if different
+          path: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_unmanaged.zip
+          geo: "unitedstates" # <-- change to your Power Platform region if different
           rule-level-override: High # fail the build only on High severity findings
 
-      - name: Upload managed solution as build artifact
+      - name: Upload unmanaged solution as build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: managed-solution
-          path: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_managed.zip
+          name: unmanaged-solution
+          path: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_unmanaged.zip
 
   deploy-test:
     needs: build
@@ -70,10 +79,10 @@ jobs:
       - name: Install Power Platform CLI tools
         uses: microsoft/powerplatform-actions/actions-install@v1
 
-      - name: Download managed solution
+      - name: Download unmanaged solution
         uses: actions/download-artifact@v4
         with:
-          name: managed-solution
+          name: unmanaged-solution
           path: ${{ env.PACK_PATH }}
 
       - name: Import to Test
@@ -83,7 +92,7 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           client-secret: ${{ secrets.CLIENT_SECRET }}
           tenant-id: ${{ secrets.TENANT_ID }}
-          solution-file: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_managed.zip
+          solution-file: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_unmanaged.zip
           # settings-file: deployment/test.settings.json   # uncomment once you have
           #   environment-specific connection references / env variables — see README
 
@@ -103,10 +112,10 @@ jobs:
       - name: Install Power Platform CLI tools
         uses: microsoft/powerplatform-actions/actions-install@v1
 
-      - name: Download managed solution
+      - name: Download unmanaged solution
         uses: actions/download-artifact@v4
         with:
-          name: managed-solution
+          name: unmanaged-solution
           path: ${{ env.PACK_PATH }}
 
       - name: Import to Prod
@@ -116,7 +125,7 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           client-secret: ${{ secrets.CLIENT_SECRET }}
           tenant-id: ${{ secrets.TENANT_ID }}
-          solution-file: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_managed.zip
+          solution-file: ${{ env.PACK_PATH }}/${{ env.SOLUTION_NAME }}_unmanaged.zip
           # settings-file: deployment/prod.settings.json
 
       - name: Publish customizations
